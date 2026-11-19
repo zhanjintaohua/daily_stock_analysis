@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- [改进] 每日分析工作流（00-daily-analysis.yml）注入 Cehwa 渠道环境变量（LLM_CEHWA_*，API Key 只走 Secrets），贴好 Secrets 后 Actions 可走 Cehwa 路由跑 DeepSeek-V4-Pro。
 - [修复] LLM 决策仪表盘 JSON 提取改为容错解析：允许正文前导文字与 ```json 围栏后的尾随 Markdown，围栏内 JSON、大括号扫描与 json-repair 三路兜底提取；只有两个不同候选都满足最小契约时才报 ambiguous_json，无任何候选可解析时才报 invalid_json（推理模型常在完整 JSON 前后附加说明文字，旧逻辑一律判 ambiguous_json 导致报告无法落盘）。
 - [修复] 个股分析 LLM 输出上限改为环境变量 `DSA_MAX_OUTPUT_TOKENS` 可调，默认 32768（原硬编码 8192 对推理模型不够用，推理 token 也计入输出预算，完整 JSON 仪表盘常被截断或返回空响应）。
 - [修复] 选股、告警与个股分析报告统一使用同一 Wilder RSI（`src/utils/rsi.py`，基于 `fin-primitives`，以前 period 个涨跌幅的简单均值起算，与 TA-Lib 一致）：选股不再使用简单滚动均值，告警与报告不再以首行零涨跌幅起算 ewm，短历史下三处的超买/超卖判断不再出现分歧。预热期与无波动时仍为中性值 50；RSI 告警不再用预热占位值判断穿越，最少历史改为 period+2 根。
