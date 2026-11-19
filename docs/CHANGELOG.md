@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - [修复] 财报接线超时与熔断污染：基本面阶段总预算默认 8.0 秒改为 60.0 秒、单能力源调用超时默认 8.0 秒改为 30.0 秒（财报包需连续调多个 AkShare 接口，首次调用就可能超过 8 秒，旧默认值在限流日整批超时丢财报）；财报包熔断键改为按股票隔离，一只票的超时不再拖垮同进程后续所有票；超时与熔断跳过改为 warning 日志，流水线基本面聚合后打印 coverage。
+- [修复] 板块/概念排行时序：市场结构层收到空的板块/概念预载时不再直接采用，改为在 prompt 组装前同步实时拉取，避免上游板块块超时后排行晚于 prompt 到达；仍取不到时按缺失标记并记录原因，不用空值冒充。
+- [修复] 概念排行新增新浪备用源：东财 push2 概念榜（限流报 502）失败或返回空时，改走新浪概念行情（ak.stock_sector_spot，indicator='概念'），与行业排行同一备用链路；妙想等补充源不提供概念榜单，无法兜底。
+- [修复] 概念排行全部失败时不再只记日志：manager 汇总全部数据源的失败原因，pipeline 写入 concept_boards.errors，报告可据此标明缺失来源与原因。
+- [改进] 每日分析 workflow 透传 NEWS_INTEL_AUTO_FETCH_ENABLED，Actions 默认开启本地资讯池自动刷新；如需关闭，在仓库 Variables 设为 false，无需再改 workflow。
 - [改进] 每日分析改按需触发：取消工作日 18:00 定时全量跑（不再每天重分析历史票），手动触发新增 stocks 输入，指定单只或多只股票只跑这些票。
 
 - [改进] 每日分析工作流（00-daily-analysis.yml）注入 Cehwa 渠道环境变量（LLM_CEHWA_*，API Key 只走 Secrets），贴好 Secrets 后 Actions 可走 Cehwa 路由跑 DeepSeek-V4-Pro。

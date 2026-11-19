@@ -4977,7 +4977,6 @@ class DataFetcherManager:
         if normalized_n <= 0:
             normalized_n = 5
 
-        last_error = ""
         now = time.monotonic()
 
         with self.__class__._concept_rankings_cache_lock:
@@ -4988,6 +4987,11 @@ class DataFetcherManager:
 
             top: List[Dict] = []
             bottom: List[Dict] = []
+            # Keep every source's failure, not just the last one: the loop
+            # ends on MiaoxiangFetcher (which never implements concept
+            # rankings), so reporting only the last error would blame the
+            # wrong source and hide the Eastmoney push2 502 that matters.
+            fetch_errors: List[str] = []
             for fetcher in self._get_fetchers_snapshot():
                 try:
                     data = fetcher.get_concept_rankings(normalized_n)
@@ -4996,12 +5000,17 @@ class DataFetcherManager:
                         bottom = data[1] or []
                         logger.info(f"[{fetcher.name}] 获取概念排行成功")
                         break
-                    last_error = f"{fetcher.name}返回空结果"
+                    fetch_errors.append(f"{fetcher.name}返回空结果")
                 except Exception as e:
                     error_type, error_reason = summarize_exception(e)
-                    last_error = f"{fetcher.name} ({error_type}) {error_reason}"
+                    fetch_errors.append(f"{fetcher.name} ({error_type}) {error_reason}")
                     logger.warning(f"[{fetcher.name}] 获取概念排行失败: {error_reason}")
 
+            last_error = "; ".join(fetch_errors)
+            # Latest fetch outcome, for callers (pipeline concept_boards)
+            # that need to name the failing source instead of silently
+            # presenting empty rankings.
+            self._last_concept_rankings_error = last_error
             if not top and not bottom and last_error:
                 logger.warning(f"[概念排行] 所有数据源均失败，最终错误: {last_error}")
 

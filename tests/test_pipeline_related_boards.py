@@ -169,7 +169,59 @@ class PipelineRelatedBoardsTestCase(unittest.TestCase):
             fundamental_context=second,
         )
 
-        pipeline.fetcher_manager.get_concept_rankings.assert_called_once_with(5)
+        # The pipeline-level cache still holds: two attach calls fetch once.
+        # Each market-structure build now refetches an *empty* concept
+        # preload live (absorbed by the manager's empty-result cache in
+        # production) instead of trusting the empty preload, so the manager
+        # is called once more per build.
+        self.assertEqual(pipeline.fetcher_manager.get_concept_rankings.call_count, 3)
+        pipeline.fetcher_manager.get_concept_rankings.assert_called_with(5)
+
+    def test_attach_belong_boards_records_concept_rankings_error(self) -> None:
+        pipeline = StockAnalysisPipeline.__new__(StockAnalysisPipeline)
+        pipeline.fetcher_manager = MagicMock()
+        pipeline.fetcher_manager.get_belong_boards.return_value = [{"name": "机器人概念", "type": "概念"}]
+        pipeline.fetcher_manager.get_concept_rankings.return_value = ([], [])
+        pipeline.fetcher_manager._last_concept_rankings_error = (
+            "AkshareFetcher (HTTPError) 502 Bad Gateway; MiaoxiangFetcher返回空结果"
+        )
+
+        context = {
+            "market": "cn",
+            "status": "ok",
+            "coverage": {"boards": "ok"},
+            "boards": {"status": "ok", "data": {"top": [], "bottom": []}},
+        }
+
+        enriched = pipeline._attach_belong_boards_to_fundamental_context("600519", context)
+
+        self.assertEqual(enriched["concept_boards"]["status"], "partial")
+        self.assertEqual(
+            enriched["concept_boards"]["errors"],
+            ["AkshareFetcher (HTTPError) 502 Bad Gateway; MiaoxiangFetcher返回空结果"],
+        )
+
+    def test_concept_rankings_error_names_every_source(self) -> None:
+        class _FailingConceptFetcher:
+            name = "AkshareFetcher"
+
+            def get_concept_rankings(self, n: int = 5):
+                raise RuntimeError("502 Bad Gateway")
+
+        class _EmptyConceptFetcher:
+            name = "MiaoxiangFetcher"
+
+            def get_concept_rankings(self, n: int = 5):
+                return None
+
+        manager = DataFetcherManager.__new__(DataFetcherManager)
+        manager._fetchers = [_FailingConceptFetcher(), _EmptyConceptFetcher()]
+
+        top, bottom = manager.get_concept_rankings(5)
+
+        self.assertEqual((top, bottom), ([], []))
+        self.assertIn("AkshareFetcher", manager._last_concept_rankings_error)
+        self.assertIn("MiaoxiangFetcher返回空结果", manager._last_concept_rankings_error)
 
     def test_get_concept_rankings_for_market_no_long_block_with_hanging_fetcher(self) -> None:
         fetcher = _HangingConceptRankingFetcher()

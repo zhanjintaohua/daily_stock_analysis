@@ -357,6 +357,51 @@ def test_market_hotspot_service_refreshes_cached_ok_after_ttl() -> None:
     assert fetcher.concept_calls == 2
 
 
+def test_market_hotspot_service_refetches_empty_preloaded_rankings() -> None:
+    """An empty preload must not shadow the live fetch.
+
+    The market-structure layer passes ``{}`` when the fundamental boards
+    block failed/timed out. That is "upstream never delivered", not "the
+    market has no rankings": the service must fetch live, synchronously, so
+    the rankings reach the prompt that is assembled right after.
+    """
+    fetcher = _FakeFetcherManager()
+    service = MarketHotspotService(fetcher_manager=fetcher)
+
+    context = service.get_hotspots(
+        market="cn",
+        trade_date="2026-07-04",
+        sector_rankings={"top": [], "bottom": []},
+        concept_rankings={"top": [], "bottom": []},
+    )
+
+    assert context["status"] == "ok"
+    assert context["leading_industries"][0]["name"] == "通用设备"
+    assert context["leading_concepts"][0]["name"] == "机器人概念"
+    assert fetcher.sector_calls == 1
+    assert fetcher.concept_calls == 1
+
+
+def test_market_hotspot_service_refetches_only_the_empty_preloaded_family() -> None:
+    fetcher = _FakeFetcherManager()
+    service = MarketHotspotService(fetcher_manager=fetcher)
+
+    context = service.get_hotspots(
+        market="cn",
+        trade_date="2026-07-04",
+        sector_rankings={
+            "top": [{"name": "预载行业", "change_pct": 3.0}],
+            "bottom": [],
+        },
+        concept_rankings={"top": [], "bottom": []},
+    )
+
+    assert context["leading_industries"][0]["name"] == "预载行业"
+    assert context["leading_concepts"][0]["name"] == "机器人概念"
+    assert fetcher.sector_calls == 0
+    assert fetcher.concept_calls == 1
+
+
 def test_market_hotspot_service_fails_open_when_rankings_unavailable() -> None:
     service = MarketHotspotService(fetcher_manager=_FakeFetcherManager(fail=True))
 

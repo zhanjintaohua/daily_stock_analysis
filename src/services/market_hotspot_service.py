@@ -89,6 +89,15 @@ class MarketHotspotService:
         except (TypeError, ValueError):
             limit = 5
 
+        # An empty preload (no top/bottom rows) means the upstream boards
+        # block failed or timed out -- it is not evidence that the market has
+        # no rankings. Treat it as absent so the live fetch below runs
+        # synchronously, before the caller assembles the LLM prompt. Without
+        # this, a boards timeout silently pins an empty ranking set into the
+        # prompt while the timed-out provider worker may still log a success
+        # afterwards (its result then arrives too late for the prompt).
+        sector_rankings = self._preloaded_rankings_or_none(sector_rankings)
+        concept_rankings = self._preloaded_rankings_or_none(concept_rankings)
         uses_preloaded_rankings = sector_rankings is not None or concept_rankings is not None
         cache_key = (normalized_market, trade_date_text, limit)
         if not uses_preloaded_rankings:
@@ -193,6 +202,26 @@ class MarketHotspotService:
         if uses_preloaded_rankings:
             return payload
         return self._store_cached_hotspots(cache_key, payload)
+
+    @staticmethod
+    def _preloaded_rankings_or_none(rankings: Any) -> Any:
+        """Return a preloaded ranking payload only if it carries rows.
+
+        ``{}`` / ``{"top": [], "bottom": []}`` (what the market-structure
+        layer passes when the fundamental boards block failed) carries no
+        evidence and must fall through to the live fetch. Non-dict payloads
+        are passed through unchanged so the existing "invalid" handling in
+        ``_rankings_from_payload`` still applies.
+        """
+        if not isinstance(rankings, dict):
+            return rankings
+        top = rankings.get("top")
+        bottom = rankings.get("bottom")
+        if isinstance(top, list) and top:
+            return rankings
+        if isinstance(bottom, list) and bottom:
+            return rankings
+        return None
 
     def _resolve_rankings(
         self,

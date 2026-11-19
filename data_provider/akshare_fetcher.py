@@ -2243,26 +2243,25 @@ class AkshareFetcher(BaseFetcher):
             return None
 
     def get_concept_rankings(self, n: int = 5) -> Optional[Tuple[List[Dict], List[Dict]]]:
-        """获取概念/题材涨跌榜。"""
+        """获取概念/题材涨跌榜。
+
+        数据源优先级：
+        1. 东财接口 (ak.stock_board_concept_name_em, push2)
+        2. 新浪接口 (ak.stock_sector_spot, indicator='概念')
+
+        东财 push2 在限流时常报 502，此前概念排行只有这一路来源，失败
+        即全空；妙想等补充源不提供概念榜单，无法兜底。
+        """
         import akshare as ak
 
-        try:
-            self._set_random_user_agent()
-            self._enforce_rate_limit()
-
-            logger.info("[API调用] ak.stock_board_concept_name_em() 获取概念排行...")
-            df = ak.stock_board_concept_name_em()
-            if df is None or df.empty:
-                return None
-
-            change_col = '涨跌幅'
-            name_col = '板块名称'
+        def _get_rank_top_n(df: pd.DataFrame, change_col: str, name_col: str, n: int) -> Optional[Tuple[List[Dict], List[Dict]]]:
             if change_col not in df.columns or name_col not in df.columns:
                 return None
-
             df = df.copy()
             df[change_col] = pd.to_numeric(df[change_col], errors='coerce')
             df = df.dropna(subset=[change_col])
+            if df.empty:
+                return None
             top = df.nlargest(n, change_col)
             bottom = df.nsmallest(n, change_col)
             return (
@@ -2275,8 +2274,36 @@ class AkshareFetcher(BaseFetcher):
                     for _, row in bottom.iterrows()
                 ],
             )
+
+        # 优先东财接口
+        try:
+            self._set_random_user_agent()
+            self._enforce_rate_limit()
+
+            logger.info("[API调用] ak.stock_board_concept_name_em() 获取概念排行...")
+            df = ak.stock_board_concept_name_em()
+            if df is not None and not df.empty:
+                ranked = _get_rank_top_n(df, '涨跌幅', '板块名称', n)
+                if ranked is not None:
+                    return ranked
+            logger.warning("[Akshare] 东财接口概念排行返回空或缺列，尝试新浪接口")
         except Exception as e:
-            logger.warning(f"[Akshare] 获取概念排行失败: {e}")
+            logger.warning(f"[Akshare] 东财接口获取概念排行失败: {e}，尝试新浪接口")
+
+        # 东财失败后，尝试新浪接口（与行业排行同一备用链路；
+        # ak.stock_sector_spot(indicator='概念') 返回与'行业'相同的
+        # '板块'/'涨跌幅'列）。
+        try:
+            self._set_random_user_agent()
+            self._enforce_rate_limit()
+
+            logger.info("[API调用] ak.stock_sector_spot(indicator='概念') 获取概念排行(新浪)...")
+            df = ak.stock_sector_spot(indicator='概念')
+            if df is None or df.empty:
+                return None
+            return _get_rank_top_n(df, '涨跌幅', '板块', n)
+        except Exception as e:
+            logger.error(f"[Akshare] 新浪接口获取概念排行也失败: {e}")
             return None
 
     def get_hot_stocks(self, n: int = 10) -> Optional[List[Dict[str, Any]]]:

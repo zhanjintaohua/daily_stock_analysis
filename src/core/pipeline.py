@@ -1316,15 +1316,25 @@ class StockAnalysisPipeline:
             "top": top_concepts,
             "bottom": bottom_concepts,
         }
+        concept_boards: Dict[str, Any] = {
+            "status": "ok" if top_concepts and bottom_concepts else "partial",
+            "data": concept_data,
+        }
         if not top_concepts and not bottom_concepts:
             # Empty lists are removed while fundamental contexts are merged.
             # Keep a non-empty internal marker so downstream consumers can
             # distinguish an attempted empty result from a missing preload.
             concept_data["fetch_attempted"] = True
-        enriched_context["concept_boards"] = {
-            "status": "ok" if top_concepts and bottom_concepts else "partial",
-            "data": concept_data,
-        }
+            # Name the failing source instead of silently presenting empty
+            # rankings: the manager records every source's failure (e.g.
+            # Eastmoney push2 502, then a supplementary source returning
+            # empty because it never implements concept rankings).
+            last_error = getattr(
+                self.fetcher_manager, "_last_concept_rankings_error", None
+            )
+            if isinstance(last_error, str) and last_error.strip():
+                concept_boards["errors"] = [last_error]
+        enriched_context["concept_boards"] = concept_boards
 
     def _get_concept_rankings_for_market(
         self,
