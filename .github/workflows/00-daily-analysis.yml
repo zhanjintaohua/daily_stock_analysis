@@ -354,10 +354,13 @@ jobs:
           SEARXNG_TIMEOUT_SECONDS: ${{ vars.SEARXNG_TIMEOUT_SECONDS || secrets.SEARXNG_TIMEOUT_SECONDS }}
           MX_APIKEY: ${{ secrets.MX_APIKEY }}
           MX_PRIORITY: ${{ vars.MX_PRIORITY || secrets.MX_PRIORITY }}
+          # 本地资讯池自动刷新（RSS/Atom/NewsNow）：默认开启；如需关闭，在 Settings → Variables 添加 NEWS_INTEL_AUTO_FETCH_ENABLED=false
+          NEWS_INTEL_AUTO_FETCH_ENABLED: ${{ vars.NEWS_INTEL_AUTO_FETCH_ENABLED || secrets.NEWS_INTEL_AUTO_FETCH_ENABLED || 'true' }}
           
           # ==========================================
           # 通知渠道（可同时配置多个，全部推送）
           # ==========================================
+          
           
           # 方式一：企业微信 Webhook
           WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
