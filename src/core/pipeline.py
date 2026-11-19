@@ -615,6 +615,11 @@ class StockAnalysisPipeline:
                     code,
                     fundamental_context,
                 )
+            if isinstance(fundamental_context, dict):
+                logger.info(
+                    f"{stock_name}({code}) 基本面聚合完成: "
+                    f"coverage={fundamental_context.get('coverage', {})}"
+                )
             market_structure_context = self._build_market_structure_context(
                 code=code,
                 stock_name=stock_name,

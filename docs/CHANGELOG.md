@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- [修复] 财报接线超时与熔断污染：基本面阶段总预算默认 8.0 秒改为 60.0 秒、单能力源调用超时默认 8.0 秒改为 30.0 秒（财报包需连续调多个 AkShare 接口，首次调用就可能超过 8 秒，旧默认值在限流日整批超时丢财报）；财报包熔断键改为按股票隔离，一只票的超时不再拖垮同进程后续所有票；超时与熔断跳过改为 warning 日志，流水线基本面聚合后打印 coverage。
 - [改进] 每日分析改按需触发：取消工作日 18:00 定时全量跑（不再每天重分析历史票），手动触发新增 stocks 输入，指定单只或多只股票只跑这些票。
 
 - [改进] 每日分析工作流（00-daily-analysis.yml）注入 Cehwa 渠道环境变量（LLM_CEHWA_*，API Key 只走 Secrets），贴好 Secrets 后 Actions 可走 Cehwa 路由跑 DeepSeek-V4-Pro。

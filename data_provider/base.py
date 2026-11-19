@@ -3466,6 +3466,10 @@ class DataFetcherManager:
         state = {"completed": False, "timed_out": False}
         with self._fundamental_timeout_lock:
             if quarantine_key is not None and self._fundamental_timed_out_workers.get(quarantine_key, 0):
+                logger.warning(
+                    f"{task_name} skipped: previous request still running "
+                    f"(quarantine_key={quarantine_key})"
+                )
                 return None, f"{task_name} timeout: previous request still running", int((time.monotonic() - start) * 1000)
             if not slots.acquire(blocking=False):
                 return None, f"{task_name} timeout worker pool exhausted", int((time.monotonic() - start) * 1000)
@@ -3503,6 +3507,10 @@ class DataFetcherManager:
                     self._fundamental_timed_out_workers[quarantine_key] = (
                         self._fundamental_timed_out_workers.get(quarantine_key, 0) + 1
                     )
+                logger.warning(
+                    f"{task_name} timeout after {timeout_value}s; "
+                    "background worker still running"
+                )
                 return None, f"{task_name} timeout", int((time.monotonic() - start) * 1000)
         if "value" in error_holder:
             return None, str(error_holder["value"]), int((time.monotonic() - start) * 1000)
@@ -4443,7 +4451,9 @@ class DataFetcherManager:
                 lambda: self._fundamental_adapter.get_fundamental_bundle(stock_code),
                 bundle_timeout,
                 "fundamental_bundle",
-                quarantine_key=("akshare", "fundamental_bundle"),
+                # Per-stock quarantine: one stock's hung bundle call must not
+                # block the bundle for every later stock in the same process.
+                quarantine_key=("akshare", f"fundamental_bundle:{stock_code}"),
             )
             _consume_budget(bundle_ms)
             if not isinstance(bundle_payload, dict):
