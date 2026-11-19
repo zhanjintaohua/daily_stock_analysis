@@ -13,6 +13,7 @@ A股自选股智能分析系统 - AI分析层
 import json
 import logging
 import math
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -3670,7 +3671,7 @@ Output strictly in the following JSON format. This is a complete Decision Dashbo
         max_tokens = (
             generation_config.get('max_output_tokens')
             or generation_config.get('max_tokens')
-            or 8192
+            or int(os.environ.get("DSA_MAX_OUTPUT_TOKENS", "32768"))
         )
         requested_temperature = generation_config.get('temperature', 0.7)
         requested_timeout = generation_config.get("timeout")
@@ -4213,9 +4214,12 @@ Output strictly in the following JSON format. This is a complete Decision Dashbo
                 logger.debug(f"=== 完整 Prompt ({len(prompt)}字符) ===\n{prompt}\n=== End Prompt ===")
 
             # 设置生成配置
+            # 推理模型 (如 DeepSeek-V4-Pro) 的推理 token 也计入输出预算,
+            # 8192 对完整 JSON 仪表盘不够用 (实测小 schema 探针已用 ~4424 tokens)。
+            # 可用 DSA_MAX_OUTPUT_TOKENS 环境变量覆盖, 默认 32768。
             generation_config = {
                 "temperature": config.llm_temperature,
-                "max_output_tokens": 8192,
+                "max_output_tokens": int(os.environ.get("DSA_MAX_OUTPUT_TOKENS", "32768")),
             }
 
             logger.info(f"[LLM调用] 开始调用 {model_name}...")
@@ -5334,59 +5338,130 @@ Output the complete Decision Dashboard in JSON format."""
         apply_placeholder_fill(result, missing_fields)
 
     def _extract_analysis_json_object(self, response_text: str) -> Tuple[str, Dict[str, Any]]:
-        """Extract the single allowed JSON object from an LLM response."""
+        """Extract the single allowed JSON object from an LLM response.
+
+        Reasoning models commonly wrap the dashboard in prose: an intro line,
+        a ```json fenced block, and trailing markdown after the closing fence
+        (run #2: 688836/SPCX/NVDA all had this shape with a complete JSON
+        object inside, yet were rejected as ``ambiguous_json``). Candidates
+        are therefore collected from fenced blocks first, then from a
+        balanced-brace scan of the whole reply, then from the whole reply,
+        and the first candidate that parses to an object containing a
+        minimal-contract field wins. ``ambiguous_json`` is raised only when
+        two *different* candidates both parse and both satisfy the minimal
+        contract; ``invalid_json`` only when nothing parses at all. A parsed
+        object without any minimal-contract field is returned as-is so the
+        minimal-contract validator can report exactly which fields are
+        genuinely absent.
+        """
 
         text = response_text or ""
         stripped = text.strip()
         if not stripped:
             raise ValueError("empty_response")
 
+        candidates: List[Tuple[str, str]] = []
         fence_pattern = re.compile(
             r"```[ \t]*(?P<lang>[A-Za-z0-9_-]*)[ \t]*\n?(?P<body>.*?)```",
             flags=re.DOTALL,
         )
-        fenced_matches = list(fence_pattern.finditer(text))
-        if len(fenced_matches) > 1:
-            raise ValueError("ambiguous_json")
-        if len(fenced_matches) == 1:
-            match = fenced_matches[0]
-            outside = (text[:match.start()] + text[match.end():]).strip()
-            if outside:
-                raise ValueError("ambiguous_json")
+        for index, match in enumerate(fence_pattern.finditer(text)):
             fence_lang = (match.group("lang") or "").strip().lower()
             if fence_lang not in {"", "json"}:
-                raise ValueError("ambiguous_json")
-            json_str = match.group("body").strip()
-            data = self._load_analysis_json_candidate(json_str)
-            return json_str, data
-        if "```" in text:
-            raise ValueError("ambiguous_json")
+                continue
+            candidates.append((f"fence[{index}]", match.group("body").strip()))
+        decoder = json.JSONDecoder()
+        for index, char in enumerate(text):
+            if char != "{":
+                continue
+            try:
+                _obj, end = decoder.raw_decode(text[index:])
+            except json.JSONDecodeError:
+                continue
+            candidates.append((f"brace-scan@{index}", text[index:index + end]))
+        if stripped.startswith("{"):
+            candidates.append(("whole-text", stripped))
 
-        try:
-            data = self._load_analysis_json_candidate(stripped)
-        except json.JSONDecodeError as exc:
-            if self._contains_embedded_json_object(text):
-                raise ValueError("ambiguous_json") from exc
-            raise
-        return stripped, data
+        parsed: List[Tuple[str, str, Dict[str, Any]]] = []
+        seen: set = set()
+        for source, candidate in candidates:
+            candidate = (candidate or "").strip()
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            try:
+                data = self._load_analysis_json_candidate(candidate)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+            parsed.append((source, candidate, data))
+
+        minimal_keys = {
+            "sentiment_score",
+            "trend_prediction",
+            "operation_advice",
+            "analysis_summary",
+            "dashboard",
+        }
+        winners = [item for item in parsed if any(key in item[2] for key in minimal_keys)]
+        distinct: List[Tuple[str, str, Dict[str, Any]]] = []
+        for item in winners:
+            if all(item[2] != other[2] for other in distinct):
+                distinct.append(item)
+        if len(distinct) > 1:
+            logger.debug(
+                "[LLM JSON] extraction rejected: %d distinct JSON candidates "
+                "all satisfy the minimal contract",
+                len(distinct),
+            )
+            raise ValueError("ambiguous_json")
+        if distinct:
+            source, candidate, data = distinct[0]
+            logger.debug(
+                "[LLM JSON] extraction path=%s chars=%d top_keys=%s",
+                source,
+                len(candidate),
+                sorted(data.keys()),
+            )
+            return candidate, data
+        if parsed:
+            source, candidate, data = max(parsed, key=lambda item: len(item[1]))
+            logger.debug(
+                "[LLM JSON] extraction path=%s chars=%d (no minimal-contract "
+                "field; returning largest parsed object for validation)",
+                source,
+                len(candidate),
+            )
+            return candidate, data
+        logger.debug("[LLM JSON] extraction rejected: no JSON candidate parsed")
+        raise ValueError("invalid_json")
 
     def _load_analysis_json_candidate(self, json_str: str) -> Dict[str, Any]:
-        """Parse one already-selected JSON candidate, repairing common LLM JSON drift."""
+        """Parse one already-selected JSON candidate, repairing common LLM JSON drift.
+
+        Tries, in order: strict ``json.loads``; a leading valid JSON object
+        with trailing text ignored (e.g. markdown commentary after the
+        closing brace); ``json-repair`` for truncated or otherwise malformed
+        JSON. Only raises when none of the three yields an object.
+        """
+        stripped = (json_str or "").strip()
         try:
-            data = json.loads(json_str)
-        except json.JSONDecodeError:
-            stripped = (json_str or "").strip()
+            data = json.loads(stripped)
+        except json.JSONDecodeError as exc:
             try:
-                _obj, end = json.JSONDecoder().raw_decode(stripped)
+                data, _end = json.JSONDecoder().raw_decode(stripped)
             except json.JSONDecodeError:
-                pass
-            else:
-                if stripped[end:].strip():
-                    raise
-            if not (stripped.startswith("{") and stripped.endswith("}")):
-                raise
-            repaired = self._fix_json_string(stripped)
-            data = json.loads(repaired)
+                data = None
+            if data is not None:
+                if not isinstance(data, dict):
+                    raise TypeError("json_root_not_object") from exc
+                logger.debug("[LLM JSON] extraction path=raw-decode-prefix (trailing text ignored)")
+                return data
+            try:
+                repaired = self._fix_json_string(stripped)
+                data = json.loads(repaired)
+            except Exception:
+                raise exc
+            logger.debug("[LLM JSON] extraction path=json-repair")
         if not isinstance(data, dict):
             raise TypeError("json_root_not_object")
         return data
