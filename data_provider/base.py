@@ -1838,6 +1838,7 @@ class DataFetcherManager:
         from .yfinance_fetcher import YfinanceFetcher
         from .longbridge_fetcher import LongbridgeFetcher
         from .futu_fetcher import FutuFetcher
+        from .myhhub_fetcher import MyhhubFetcher
         config = get_config()
         # 创建所有数据源实例（优先级在各 Fetcher 的 __init__ 中确定）
         efinance = EfinanceFetcher()
@@ -1846,6 +1847,7 @@ class DataFetcherManager:
         pytdx = PytdxFetcher()      # 通达信数据源（可配 PYTDX_HOST/PYTDX_PORT）
         baostock = BaostockFetcher()
         yfinance = YfinanceFetcher()
+        myhhub = MyhhubFetcher()   # 本地筹码模型兜底（priority 98，最后；无 Key）
         optional_fetchers: List[BaseFetcher] = []
 
         tushare_token = (getattr(config, "tushare_token", None) or "").strip()
@@ -1920,6 +1922,7 @@ class DataFetcherManager:
                 baostock,
                 yfinance,
                 tencent,
+                myhhub,
                 *optional_fetchers,
             ]
 

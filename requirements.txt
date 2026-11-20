@@ -36,6 +36,7 @@ pypinyin>=0.50.0            # Name-to-code resolver (pinyin matching)
 openpyxl>=3.1.0             # Excel (.xlsx) parsing for import
 numpy>=1.24.0               # Numeric computing
 fin-primitives>=3.2.0       # Technical indicators (Wilder RSI, TA-Lib compatible) for screening
+TA_Lib==0.6.8                # myhhub 61-pattern scan (CDL*) + DSA analyze_pattern talib layer; wheels bundle the C library, no system lib needed
 json-repair>=0.55.1         # JSON repair
 orjson>=3.10,<4             # LiteLLM runtime JSON dependency; explicitly bundled in desktop builds
 

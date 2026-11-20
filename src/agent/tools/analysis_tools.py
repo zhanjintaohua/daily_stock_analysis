@@ -484,7 +484,42 @@ def _handle_analyze_pattern(stock_code: str, days: int = 60) -> dict:
             unique_patterns.append(p)
     unique_patterns = list(reversed(unique_patterns))
 
-    return {
+    # --- myhhub TA-Lib 61-pattern layer (additive, 2026-11-20) ---
+    # The heuristic scan above is untouched. This appends the standard
+    # TA-Lib CDL* scan (61 patterns, vendored from myhhub/stock
+    # Apache-2.0) on the same bars, evaluated on the last bar using the
+    # last 12 bars. TA-Lib missing / scan failing => the key is absent
+    # and ``talib_note`` carries the cause; the tool never fails on
+    # this account. "No trigger" is a real answer (empty list), not a
+    # failure. Requires TA_Lib==0.6.8 (see requirements.txt).
+    talib_patterns = None
+    talib_note = None
+    try:
+        from data_provider.myhhub_vendor import adapter as _myhhub
+
+        _bars = df.tail(12).copy()
+        if "date" in _bars.columns:
+            _bars["date"] = _bars["date"].astype(str).str[:10]
+        elif hasattr(_bars.index, "strftime"):
+            _bars["date"] = _bars.index.strftime("%Y-%m-%d")
+        else:
+            _bars["date"] = ""
+        _last_date = str(_bars["date"].iloc[-1])[:10] if len(_bars) else ""
+        _res = _myhhub.detect_patterns(_bars, _last_date) if _last_date else None
+        if _res is None:
+            talib_note = "形态识别（TA-Lib）：无日期列，无法定位分析日行"
+        elif _res["ok"]:
+            talib_patterns = [
+                {"pattern": t["cn"], "key": t["key"], "value": t["value"],
+                 "signal": "看多" if t["value"] > 0 else "看空"}
+                for t in _res["triggered"]
+            ]
+        else:
+            talib_note = f"形态识别（TA-Lib）：{_res['error']}"
+    except Exception as exc:  # noqa: BLE001 - additive layer must not break the tool
+        talib_note = f"形态识别（TA-Lib）不可用：{type(exc).__name__}: {exc}"
+
+    result = {
         "code": stock_code,
         "source": source,
         "period_days": len(df),
@@ -496,6 +531,17 @@ def _handle_analyze_pattern(stock_code: str, days: int = 60) -> dict:
             else "、".join(p["pattern"] for p in unique_patterns)
         ),
     }
+    if talib_patterns is not None:
+        result["talib_patterns"] = talib_patterns
+        result["talib_summary"] = (
+            "TA-Lib 61 种均未触发" if not talib_patterns
+            else "、".join(
+                f"{p['pattern']}({p['signal']}{p['value']:+d})"
+                for p in talib_patterns)
+        )
+    if talib_note is not None:
+        result["talib_note"] = talib_note
+    return result
 
 
 analyze_pattern_tool = ToolDefinition(

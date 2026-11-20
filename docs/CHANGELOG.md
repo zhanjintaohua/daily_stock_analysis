@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- [新功能] 筹码分布新增 myhhub 本地模型兜底（myhhub/stock Apache-2.0，仅拆筹码分布与形态识别两模块）：东财 CYQ、妙想、Tushare 全部失败时，MyhhubFetcher（优先级 98，最后）用 push2his 日线本地重算 210 交易日筹码分布（获利比例/平均成本/90%/70% 集中度），无 Key、不新增付费源，source 标为 myhhub 以区别于东财 CYQ；analyze_pattern 工具在启发式扫描之外追加 TA-Lib 61 种 K 线形态层（talib_patterns/talib_summary，缺 TA-Lib 时只记 talib_note、不失败），需 TA_Lib==0.6.8（已加入 requirements.txt）。
+
 - [修复] 财报接线超时与熔断污染：基本面阶段总预算默认 8.0 秒改为 60.0 秒、单能力源调用超时默认 8.0 秒改为 30.0 秒（财报包需连续调多个 AkShare 接口，首次调用就可能超过 8 秒，旧默认值在限流日整批超时丢财报）；财报包熔断键改为按股票隔离，一只票的超时不再拖垮同进程后续所有票；超时与熔断跳过改为 warning 日志，流水线基本面聚合后打印 coverage。
 - [修复] 板块/概念排行时序：市场结构层收到空的板块/概念预载时不再直接采用，改为在 prompt 组装前同步实时拉取，避免上游板块块超时后排行晚于 prompt 到达；仍取不到时按缺失标记并记录原因，不用空值冒充。
 - [修复] 概念排行新增新浪备用源：东财 push2 概念榜（限流报 502）失败或返回空时，改走新浪概念行情（ak.stock_sector_spot，indicator='概念'），与行业排行同一备用链路；妙想等补充源不提供概念榜单，无法兜底。
